@@ -1,0 +1,277 @@
+---
+title: "MashroomProject"
+author: "Shan Aziz"
+date: "2024-03-12"
+output:
+  pdf_document: default
+  html_document: default
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r}
+library(ggplot2) # Data visualization
+library(caret)
+library(randomForest)
+library(caTools)   #<- For splitting
+library(rpart.plot)
+library(rattle)
+library(gbm)
+library(dplyr)
+library(lsr)
+library(corrplot)
+library(vcd)
+
+mushroom<-read.csv("C:/R/files/mushrooms.csv")
+
+# Convert each column to a factor
+mushroom <- data.frame(lapply(mushroom, factor)) 
+
+# Count the number of levels per variable
+z <- cbind.data.frame(Var = names(mushroom), 
+                      Total_Class = sapply(mushroom, function(x) length(levels(x))))
+print(z)
+
+```
+
+## The result shows that veil.type has only one level and thus can be discarded as
+
+## it will play no role in prediction
+
+```{r}
+mushroom$veil.type <- NULL 
+#Deleting the veil.type column
+```
+
+
+## setting a splitting ratio for 70% data in training set
+
+## and 30% data in testing set
+
+```{r}
+set.seed(101)    # for fixed sampling
+sample <-sample.split(mushroom$class,SplitRatio=.80) # 70 percent
+
+x_train <- subset(mushroom, sample == TRUE)
+x_test <- subset(mushroom, sample == FALSE)
+
+y_train <- x_train$class
+y_test <- x_test$class
+
+x_train$class <- NULL
+x_test$class <- NULL
+```
+
+## Lets also create a Train Control object for 10 fold CV repeated 2 times.
+
+## This is important to make sure we do not over-fit the training data.
+
+```{r}
+
+# Enhanced Cross-Validation: 10-fold, repeated 3 times
+ctrl.1 <- trainControl(method = "repeatedcv", 
+                       number = 10, 
+                       repeats = 3, 
+                       savePredictions = "final")
+
+```
+
+
+## Model 1: Training our first random forest model
+
+```{r}
+# Train the model
+# Model 1: Random Forest
+mod1 <- train(x = x_train, y = y_train, method = "rf", trControl = ctrl.1, tuneLength = 3)
+
+plot(varImp(mod1),main="Random Forest - Variable Importance Plot")
+```
+
+## Confusion Matrix for Random Forest
+
+```{r}
+# Generate predictions for the model
+y_predicted_mod1 <- predict(mod1, x_test)
+
+# Create a data frame of original vs predicted
+df_mod1 <- data.frame(Original = y_test, Predicted = y_predicted_mod2)
+
+# Create confusion matrix
+cm_mod1 <- confusionMatrix(table(df_mod1$Original, df_mod1$Predicted))
+
+cat("Random Forest ")
+cm_mod1
+```
+
+## Model 2: Gradient Boosting Machines
+
+```{r}
+mod2 <- train(x = x_train, y = y_train, method = "gbm", trControl = ctrl.1, 
+              tuneLength = 3, verbose = FALSE)
+plot(varImp(mod2), main = "Gradient Boosting Machines - Variable Importance Plot")
+```
+
+## Confusion Matrix for GBM
+
+```{r}
+# Generate predictions for the model
+y_predicted_mod2 <- predict(mod2, x_test)
+
+# Create a data frame of original vs predicted
+df_mod2 <- data.frame(Original = y_test, Predicted = y_predicted_mod2)
+
+# Create confusion matrix
+cm_mod2 <- confusionMatrix(table(df_mod1$Original, df_mod1$Predicted))
+
+cat("GBM ")
+cm_mod2
+```
+
+## Model 3: Regression - Variable Importance Plot
+
+```{r}
+mod3 <- train(x=x_train,y=y_train,method="rpart",trControl=ctrl.1,tuneLength=5)
+plot(varImp(mod3),main="Recursive Partitioning and Regression Trees - Variable Importance Plot")
+```
+
+## Classification/Decision Tree
+
+```{r}
+# for classification tree
+fancyRpartPlot(mod3$finalModel,main="Mushroom Attributes Classification/Decision Tree",fitted(),sub=" ",
+              palettes=c("Blues","Reds"))
+```
+
+## Confusion Matrix for Regression
+
+```{r}
+# Generate predictions for the model
+y_predicted_mod3 <- predict(mod3, x_test)
+
+# Create a data frame of original vs predicted
+df_mod3 <- data.frame(Original = y_test, Predicted = y_predicted_mod2)
+
+# Create confusion matrix
+cm_mod3 <- confusionMatrix(table(df_mod1$Original, df_mod1$Predicted))
+
+cm_mod3
+```
+
+## Confusion Matrix for Regression Tree
+
+```{r}
+# Generate predictions for the model
+y_predicted_mod3 <- predict(mod3, x_test)
+
+# Create a data frame of original vs predicted
+df_mod3 <- data.frame(Original = y_test, Predicted = y_predicted_mod3)
+
+# Create confusion matrix
+cm_mod3 <- confusionMatrix(table(df_mod1$Original, df_mod1$Predicted))
+
+# Convert the table to a data frame for ggplot
+cm_df_mod3 <- as.data.frame(as.table(cm_mod1$table))
+names(cm_df_mod3) <- c("Original", "Predicted", "Frequency")
+
+# Plot using ggplot
+ggplot(cm_df_mod3, aes(x = Original, y = Predicted, fill = Frequency)) +
+  geom_tile() +
+  geom_text(aes(label = Frequency), vjust = 1) +
+  scale_fill_gradient(low = "lightpink", high = "green3") +
+  theme_minimal() +
+  labs(title = "Confusion Matrix for Regression Tree", x = "Actual Class", y = "Predicted Class")
+```
+
+```{r}
+# Extract and print Accuracy
+accuracy <- cm_mod3$overall['Accuracy']
+cat("Accuracy:", accuracy*100, "%", "\n")
+
+# Extract and print Precision (Positive Predictive Value)
+precision <- cm_mod3$byClass['Pos Pred Value']
+cat("Precision:", precision*100, "%", "\n")
+
+# Extract and print Sensitivity (Recall or True Positive Rate)
+sensitivity <- cm_mod3$byClass['Sensitivity']
+cat("Sensitivity:", sensitivity*100, "%", "\n")
+```
+
+```{r}
+
+# Function to calculate Cramer's V for each pair of categorical variables
+calculate_cramersV <- function(data) {
+  var_names <- names(data)
+  n <- length(var_names)
+  result <- matrix(NA, n, n, dimnames = list(var_names, var_names))
+  
+  for (i in seq_len(n)) {
+    for (j in seq_len(n)) {
+      if (i != j) {  # Exclude calculating V for the same variable
+        cross_tab <- table(data[[i]], data[[j]])
+        result[i, j] <- assocstats(cross_tab)$cramer
+      } else {
+        result[i, j] <- 1  # Diagonal elements are 1
+      }
+    }
+  }
+  result
+}
+
+
+# Apply the function
+cramers_v_matrix <- calculate_cramersV(mushroom)
+
+# Use corrplot to display the matrix with smaller font size and black color
+corrplot(cramers_v_matrix, method = "shade", tl.col = "black", tl.cex = 0.9)
+
+```
+
+
+## Confusion Matrix for all models
+
+```{r}
+
+# Generate predictions for each model as before
+predictions_list <- list(
+  mod1 = predict(mod1, x_test),
+  mod2 = predict(mod2, x_test),
+  mod3 = predict(mod3, x_test)
+)
+
+# Initialize an empty list to store confusion matrices data frames for plotting
+cm_dfs <- list()
+
+# Loop through predictions to generate and plot confusion matrices
+for (model_name in names(predictions_list)) {
+  # Generate confusion matrix
+  cm <- confusionMatrix(predictions_list[[model_name]], y_test)
+  
+  # Convert confusion matrix to a dataframe for ggplot
+  cm_df <- as.data.frame(cm$table)
+  colnames(cm_df) <- c("Reference", "Prediction", "Frequency")
+  
+  # Store the data frame for later plotting
+  cm_dfs[[model_name]] <- cm_df
+}
+
+# Combine all confusion matrices into one dataframe
+combined_cm_df <- bind_rows(cm_dfs, .id = "model")
+
+# Map model identifiers to titles
+model_titles <- c(mod1 = "Random Forest", mod2 = "Gradient Boosting Machines", mod3 = "RPART")
+
+# Update model column to have the model titles
+combined_cm_df$model <- model_titles[combined_cm_df$model]
+
+# Plot using ggplot
+ggplot(combined_cm_df, aes(x = Reference, y = Prediction, fill = Frequency)) +
+  geom_tile() + # Use tiles to represent the matrix
+  geom_text(aes(label = Frequency), vjust = 1) + # Add frequency text in each tile
+  facet_wrap(~model, scales = "free", labeller = labeller(model = label_value)) + # Create a subplot for each model using titles directly
+  scale_fill_gradient(low = "lightpink", high = "green3") + # Color gradient for frequencies
+  theme_bw() + # Minimal theme
+  labs(title = "Confusion Matrix for Models", x = "Actual Class", y = "Predicted Class")
+
+```
